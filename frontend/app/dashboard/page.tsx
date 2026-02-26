@@ -1,10 +1,16 @@
-"use client";
+"use client"
+import { useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 
 export default function Dashboard() {
-  return (
-    <div className="flex flex-col items-center justify-center h-screen bg-gray-50">
-      <h1 className="text-3xl font-bold mb-6">Bienvenue sur le Dashboard !</h1>
-      <p className="text-gray-600">Vous êtes connecté.</p>
-    </div>
-  );
+  const searchParams = useSearchParams()
+
+  useEffect(() => {
+    const token = searchParams.get("token")
+    if (token) {
+      localStorage.setItem("token", token)
+    }
+  }, [])
+
+  return <div>Bienvenue sur le Dashboard</div>
 }

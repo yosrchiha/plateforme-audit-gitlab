@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # 📦 GitLab
     GITLAB_TOKEN: str
     GITLAB_URL: str
+     # 🔐 GitLab OAuth
+    GITLAB_CLIENT_ID: str
+    GITLAB_CLIENT_SECRET: str
+    GITLAB_REDIRECT_URI: str = "http://127.0.0.1:8000/auth/gitlab/callback"
 
     # 📧 Mail
     MAIL_USERNAME: str

@@ -19,6 +19,9 @@ class ForgotPassword(BaseModel):
 
 
 
+
+
 class ResetPassword(BaseModel):
-    token: str
+    email: str
+    otp: str
     password: str
