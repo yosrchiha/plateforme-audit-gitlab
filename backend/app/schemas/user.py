@@ -16,12 +16,12 @@ class ForgotPassword(BaseModel):
     email: EmailStr
 
 
-
-
-
-
-
 class ResetPassword(BaseModel):
     email: str
     otp: str
     password: str
+class UserResponse(BaseModel):
+    id: int
+    nom: str
+    email: str
+    role: str

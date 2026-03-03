@@ -20,3 +20,11 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Base pour les modèles
 Base = declarative_base()
+# app/config/database.py (à la fin du fichier)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

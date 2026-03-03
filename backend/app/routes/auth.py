@@ -13,10 +13,9 @@ from app.core.security import hash_password, verify_password, create_access_toke
 from app.config.mail import fm, MessageSchema
 from app.config.settings import settings
 from fastapi.responses import RedirectResponse
-
-
+from fastapi.security import OAuth2PasswordBearer  # <-- pour get_current_user
+from app.schemas.user import UserResponse
 router = APIRouter(prefix="/auth", tags=["Auth"])
-
 
 # ------------------- DATABASE DEPENDENCY -------------------
 
@@ -27,12 +26,32 @@ def get_db():
     finally:
         db.close()
 
+# ------------------- GET CURRENT USER -------------------
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Impossible de valider l'identité",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        raise credentials_exception
+    return user
 
 # ------------------- REGISTER -------------------
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register(user: UserCreate, db: Session = Depends(get_db)):
-
     existing_user = db.query(User).filter(User.email == user.email).first()
     if existing_user:
         raise HTTPException(
@@ -52,14 +71,11 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
 
     return {"message": "User created successfully"}
 
-
 # ------------------- LOGIN -------------------
 
 @router.post("/login")
 def login(user: UserLogin, db: Session = Depends(get_db)):
-
     db_user = db.query(User).filter(User.email == user.email).first()
-
     if not db_user or not verify_password(user.password, db_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -67,38 +83,28 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
         )
 
     token = create_access_token({"sub": db_user.email})
-
     return {
         "access_token": token,
         "token_type": "bearer"
+        
     }
 
-
 # ------------------- FORGOT PASSWORD -------------------
-
-
-
-
 
 def generate_otp(length: int = 6) -> str:
     return ''.join([str(random.randint(0, 9)) for _ in range(length)])
 
-# ---------------- FORGOT PASSWORD ----------------
-# ---------------- FORGOT PASSWORD ----------------
 @router.post("/forgot-password")
 async def forgot_password(request: ForgotPassword, db: Session = Depends(get_db)):
-    # Vérifier si l'utilisateur existe
     user = db.query(User).filter(User.email == request.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
 
-    # Générer un OTP et définir la date d'expiration
     otp = generate_otp()
     user.otp = otp
     user.otp_expiry = datetime.utcnow() + timedelta(minutes=10)
     db.commit()
 
-    # Préparer l'email
     message = MessageSchema(
         subject="Votre code OTP pour réinitialisation",
         recipients=[user.email],
@@ -110,7 +116,6 @@ async def forgot_password(request: ForgotPassword, db: Session = Depends(get_db)
         subtype="html"
     )
 
-    # Envoyer l'OTP par email
     try:
         await fm.send_message(message)
     except Exception as e:
@@ -118,40 +123,24 @@ async def forgot_password(request: ForgotPassword, db: Session = Depends(get_db)
 
     return {"msg": f"OTP envoyé à {user.email}"}
 
-
-
-
-
 @router.post("/reset-password")
 async def reset_password(request: ResetPassword, db: Session = Depends(get_db)):
-
     user = db.query(User).filter(User.email == request.email).first()
-
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
-
-    # Vérifier OTP
     if user.otp != request.otp:
         raise HTTPException(status_code=400, detail="Code OTP invalide")
-
-    # Vérifier expiration
     if not user.otp_expiry or datetime.utcnow() > user.otp_expiry:
         raise HTTPException(status_code=400, detail="Code OTP expiré")
 
-    # Changer mot de passe
     user.hashed_password = hash_password(request.password)
-
-    # Supprimer OTP après utilisation
     user.otp = None
     user.otp_expiry = None
-
     db.commit()
 
     return {"msg": "Mot de passe réinitialisé avec succès"}
 
-# ---------------- GITLAB LOGIN ----------------
-
-# ---------------- GITLAB LOGIN ----------------
+# ------------------- GITLAB LOGIN -------------------
 
 @router.get("/gitlab/login")
 def gitlab_login():
@@ -163,13 +152,9 @@ def gitlab_login():
     )
     return RedirectResponse(gitlab_auth_url)
 
-
 @router.get("/gitlab/callback")
 def gitlab_callback(code: str, db: Session = Depends(get_db)):
-
-    # 1️⃣ échanger code contre token GitLab
     token_url = "https://gitlab.com/oauth/token"
-
     response = requests.post(token_url, data={
         "client_id": settings.GITLAB_CLIENT_ID,
         "client_secret": settings.GITLAB_CLIENT_SECRET,
@@ -177,31 +162,23 @@ def gitlab_callback(code: str, db: Session = Depends(get_db)):
         "grant_type": "authorization_code",
         "redirect_uri": settings.GITLAB_REDIRECT_URI,
     })
-
     token_data = response.json()
-
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail="Erreur OAuth GitLab")
 
     access_token = token_data.get("access_token")
-
-    # 2️⃣ récupérer infos utilisateur GitLab
     user_info = requests.get(
         "https://gitlab.com/api/v4/user",
         headers={"Authorization": f"Bearer {access_token}"}
     )
-
     gitlab_user = user_info.json()
 
     email = gitlab_user.get("email")
     username = gitlab_user.get("username")
-
     if not email:
         raise HTTPException(status_code=400, detail="Email non fourni par GitLab")
 
-    # 3️⃣ vérifier si utilisateur existe déjà
     user = db.query(User).filter(User.email == email).first()
-
     if not user:
         user = User(
             email=email,
@@ -212,10 +189,15 @@ def gitlab_callback(code: str, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
 
-    # 4️⃣ créer token JWT interne
     token = create_access_token({"sub": user.email})
 
-    # 5️⃣ redirection vers frontend
-    return RedirectResponse(
-        f"http://localhost:3000/dashboard?token={token}"
+    return RedirectResponse(f"http://localhost:3000/dashboard?token={token}")
+@router.get("/me", response_model=UserResponse)
+def get_me(current_user: User = Depends(get_current_user)):
+    return UserResponse(
+        id=current_user.id,
+        email=current_user.email,
+        username=current_user.username,
+        role=getattr(current_user, "role", "user"),  # si tu as ce champ
+        nom=getattr(current_user, "nom", current_user.username), # si tu as ce champ
     )

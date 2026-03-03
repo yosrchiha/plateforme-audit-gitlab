@@ -74,7 +74,7 @@ export default function LoginPage() {
           </Link>
         </p>
         <button
-  type="button"
+  type="button"className="text-center mt-6 text-sm"
   onClick={() => {
     window.location.href = "http://127.0.0.1:8000/auth/gitlab/login"
   }}
